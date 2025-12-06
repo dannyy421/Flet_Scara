@@ -13,7 +13,7 @@ class RobotModel:
         self.z = 100.0
         self.x = 0.0
         self.y = 0.0
-        self.l1 = 90.0  # Longitud del primer segmento (mm)
+        self.l1 = 100.0  # Longitud del primer segmento (mm)
         self.l2 = 220.0  # Longitud del segundo segmento (mm)
         self.speed = 500
         self.acceleration = 500
