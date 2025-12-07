@@ -5,6 +5,7 @@ import os
 import serial
 import threading
 from datetime import datetime
+import pygame
 
 class RobotModel:
     def __init__(self):
