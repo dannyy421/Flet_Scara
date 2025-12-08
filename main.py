@@ -61,6 +61,17 @@ class RobotModel:
     def inverse_kinematics(self, x, y):
         """Calcular ángulos a partir de X, Y (Inverse Kinematics)"""
         try:
+            # Verificar si está en posición home (con tolerancia)
+            home_x = -2.9083
+            home_y = 18.4984
+            tolerance = 0.1  # Tolerancia de 0.1 cm
+            
+            if abs(x - home_x) < tolerance and abs(y - home_y) < tolerance:
+                # Está en posición home, establecer directamente q1=0, q2=0
+                self.angle1 = 0.0
+                self.angle2 = 0.0
+                return True
+            
             # Calcular r (radio en el plano XY)
             r = math.sqrt(x**2 + y**2)
             
@@ -99,6 +110,12 @@ class RobotModel:
             # Convertir a grados
             self.angle1 = math.degrees(q2)  # q2 -> angle1 (mostrado como q1 en UI)
             self.angle2 = math.degrees(q3)  # q3 -> angle2 (mostrado como q2 en UI)
+            
+            # Redondear valores muy cercanos a cero
+            if abs(self.angle1) < 0.01:
+                self.angle1 = 0.0
+            if abs(self.angle2) < 0.01:
+                self.angle2 = 0.0
             
             return True
         except Exception as e:
