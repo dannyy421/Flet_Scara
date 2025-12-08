@@ -659,7 +659,7 @@ def main(page: ft.Page):
     
     teach_section = ft.Container(
         content=ft.Column([
-            ft.Text("Modo Teach - Guardar posiciones", size=18, weight="bold", color=ft.colors.PURPLE_900),
+            ft.Text("Modo Teach - Guardar posiciones", size=18, weight="bold", color=ft.colors.PINK_700),
             ft.Divider(),
             
             last_position_text,
@@ -676,9 +676,9 @@ def main(page: ft.Page):
             ),
         ]),
         padding=20,
-        border=ft.border.all(2, ft.colors.PURPLE_400),
+        border=ft.border.all(2, ft.colors.PINK_700),
         border_radius=10,
-        bgcolor=ft.colors.PURPLE_50,
+        bgcolor=ft.colors.PINK_50,
         expand=True,
     )
     
@@ -694,11 +694,11 @@ def main(page: ft.Page):
             color=ft.colors.WHITE,
         ),
         ft.Row([
+            teach_section,
             ft.Column([
                 forward_kinematics_section,
                 inverse_kinematics_section,
             ], width=650, scroll=ft.ScrollMode.AUTO),
-            teach_section,
         ], expand=True),
     )
     
