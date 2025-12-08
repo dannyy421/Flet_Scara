@@ -14,10 +14,9 @@ class RobotModel:
         self.z = 100.0
         self.x = 0.0
         self.y = 0.0
-        self.l1 = 100.0  # Longitud del primer segmento (mm)
-        self.l2 = 220.0  # Longitud del segundo segmento (mm)
-        self.speed = 500
-        self.acceleration = 500
+        self.l1 = 9.51  # Longitud del primer segmento (cm)
+        self.l2 = 22.31  # Longitud del segundo segmento (cm)
+        self.theta = math.radians(122.77133)  # Ángulo constante
         self.positions = []
         self.program_running = False
         
@@ -30,33 +29,80 @@ class RobotModel:
     
     def calculate_forward_kinematics(self):
         """Calcular posición X, Y a partir de los ángulos (Forward Kinematics)"""
-        rad1 = math.radians(self.angle1)
-        rad2 = math.radians(self.angle2)
+        # Convertir angle1 (q2) y angle2 (q3) a radianes
+        q2_rad = math.radians(self.angle1)
+        q3_rad = math.radians(self.angle2)
         
-        self.x = self.l1 * math.cos(rad1) + self.l2 * math.cos(rad1 + rad2)
-        self.y = self.l1 * math.sin(rad1) + self.l2 * math.sin(rad1 + rad2)
+        # Calcular r (radio en el plano XY)
+        # De las ecuaciones inversas: D = cos(phi), phi = -(q3 + theta - pi)
+        phi = -(q3_rad + self.theta - math.pi)
+        D = math.cos(phi)
+        
+        # De D = (l1^2 + l2^2 - r^2)/(2*l1*l2), resolver para r
+        r_squared = self.l1**2 + self.l2**2 - 2*self.l1*self.l2*D
+        r = math.sqrt(max(0, r_squared))
+        
+        # Calcular beta usando la ley de cosenos
+        if r > 0:
+            A = (self.l1**2 + r**2 - self.l2**2)/(2*self.l1*r)
+            A = max(-1, min(1, A))  # Limitar entre -1 y 1
+            beta = math.atan2(math.sqrt(1-A**2), A)
+            
+            # Calcular alpha a partir de q2
+            alpha = q2_rad + beta
+            
+            # Calcular x, y
+            self.x = r * math.cos(alpha)
+            self.y = r * math.sin(alpha)
+        else:
+            self.x = 0
+            self.y = 0
     
     def inverse_kinematics(self, x, y):
         """Calcular ángulos a partir de X, Y (Inverse Kinematics)"""
         try:
-            # Cálculo de theta2
-            cos_theta2 = (x**2 + y**2 - self.l1**2 - self.l2**2) / (2 * self.l1 * self.l2)
+            # Calcular r (radio en el plano XY)
+            r = math.sqrt(x**2 + y**2)
             
-            if abs(cos_theta2) > 1:
+            if r < abs(self.l1 - self.l2) or r > (self.l1 + self.l2):
                 return False  # Posición inalcanzable
             
-            theta2 = math.acos(cos_theta2)
+            # Calcular alpha primero para determinar el signo
+            alpha = math.atan2(y, x)
             
-            # Cálculo de theta1
-            k1 = self.l1 + self.l2 * math.cos(theta2)
-            k2 = self.l2 * math.sin(theta2)
-            theta1 = math.atan2(y, x) - math.atan2(k2, k1)
+            # Cálculo de q3 (angle2 en la interfaz)
+            D = ((self.l1**2) + (self.l2**2) - r**2)/(2*self.l1*self.l2)
+            D = max(-1, min(1, D))  # Limitar entre -1 y 1
             
-            self.angle1 = math.degrees(theta1)
-            self.angle2 = math.degrees(theta2)
+            # Cálculo de q2 (angle1 en la interfaz)
+            A = ((self.l1**2) + (r**2) - self.l2**2)/(2*self.l1*r)
+            A = max(-1, min(1, A))  # Limitar entre -1 y 1
+            
+            # Calcular beta para determinar q2
+            beta = math.atan2(math.sqrt(1-A**2), A)
+            q2 = alpha - beta
+            
+            # Si q2 (angle1/q1 en interfaz) es negativo, cambiar signo en sqrt
+            if q2 < 0:
+                beta = math.atan2(-math.sqrt(1-A**2), A)
+                phi = math.atan2(-math.sqrt(1-D**2), D)
+            else:
+                beta = math.atan2(math.sqrt(1-A**2), A)
+                phi = math.atan2(math.sqrt(1-D**2), D)
+            
+            # Recalcular q2 con el beta correcto
+            q2 = alpha - beta
+            
+            # Calcular q3 con el phi correcto
+            q3 = -(phi + self.theta - math.pi)
+            
+            # Convertir a grados
+            self.angle1 = math.degrees(q2)  # q2 -> angle1 (mostrado como q1 en UI)
+            self.angle2 = math.degrees(q3)  # q3 -> angle2 (mostrado como q2 en UI)
             
             return True
-        except:
+        except Exception as e:
+            print(f"Error en IK: {e}")
             return False
     
     def save_position(self):
@@ -81,8 +127,6 @@ class RobotModel:
             with open(filename, 'w') as f:
                 json.dump({
                     'positions': self.positions,
-                    'speed': self.speed,
-                    'acceleration': self.acceleration,
                 }, f, indent=2)
             return True
         except:
@@ -95,8 +139,6 @@ class RobotModel:
                 with open(filename, 'r') as f:
                     data = json.load(f)
                     self.positions = data.get('positions', [])
-                    self.speed = data.get('speed', 500)
-                    self.acceleration = data.get('acceleration', 500)
                 return True
         except:
             pass
@@ -242,9 +284,9 @@ def main(page: ft.Page):
     
     # ==================== INVERSE KINEMATICS SECTION ====================
     
-    x_input = ft.TextField(label="X", width=100, input_filter=ft.NumbersOnlyInputFilter())
-    y_input = ft.TextField(label="Y", width=100, input_filter=ft.NumbersOnlyInputFilter())
-    z_input = ft.TextField(label="Z", width=100, value="100", input_filter=ft.NumbersOnlyInputFilter())
+    x_input = ft.TextField(label="X", width=100, keyboard_type=ft.KeyboardType.NUMBER)
+    y_input = ft.TextField(label="Y", width=100, keyboard_type=ft.KeyboardType.NUMBER)
+    z_input = ft.TextField(label="Z", width=100, value="100", keyboard_type=ft.KeyboardType.NUMBER)
     
     # ==================== TEACH MODE SECTION ====================
     
@@ -272,6 +314,11 @@ def main(page: ft.Page):
         x_display.value = f"X: {robot.x:.2f}"
         y_display.value = f"Y: {robot.y:.2f}"
         z_display.value = f"Z: {robot.z:.2f}"
+        
+        # Actualizar también los campos de cinemática inversa
+        x_input.value = f"{robot.x:.2f}"
+        y_input.value = f"{robot.y:.2f}"
+        z_input.value = f"{robot.z:.2f}"
         
         page.update()
     
@@ -309,6 +356,24 @@ def main(page: ft.Page):
         except:
             pass
     
+    def bajar_plumon(e):
+        """Bajar plumón - establecer Z en 0"""
+        z_slider.value = 0
+        update_sliders_and_info()
+        send_serial(f"Z:{robot.z:.2f}\n")
+        page.snack_bar = ft.SnackBar(ft.Text("Plumón bajado"))
+        page.snack_bar.open = True
+        page.update()
+    
+    def subir_plumon(e):
+        """Subir plumón - establecer Z en 150"""
+        z_slider.value = 150
+        update_sliders_and_info()
+        send_serial(f"Z:{robot.z:.2f}\n")
+        page.snack_bar = ft.SnackBar(ft.Text("Plumón subido"))
+        page.snack_bar.open = True
+        page.update()
+    
     # JOG buttons
     j1_minus_btn = ft.ElevatedButton("-", width=70, on_click=lambda e: jog_minus(j1_slider, j1_jog_val))
     j1_plus_btn = ft.ElevatedButton("+", width=70, on_click=lambda e: jog_plus(j1_slider, j1_jog_val))
@@ -316,8 +381,21 @@ def main(page: ft.Page):
     j2_minus_btn = ft.ElevatedButton("-", width=70, on_click=lambda e: jog_minus(j2_slider, j2_jog_val))
     j2_plus_btn = ft.ElevatedButton("+", width=70, on_click=lambda e: jog_plus(j2_slider, j2_jog_val))
     
-    z_minus_btn = ft.ElevatedButton("-", width=70, on_click=lambda e: jog_minus(z_slider, z_jog_val))
-    z_plus_btn = ft.ElevatedButton("+", width=70, on_click=lambda e: jog_plus(z_slider, z_jog_val))
+    bajar_plumon_btn = ft.ElevatedButton("Bajar plumón", width=150, on_click=bajar_plumon)
+    subir_plumon_btn = ft.ElevatedButton("Subir plumón", width=150, on_click=subir_plumon)
+    
+    def bajar_plumon_ik(e):
+        """Bajar plumón en cinemática inversa - establecer Z en 0"""
+        z_input.value = "0"
+        page.update()
+    
+    def subir_plumon_ik(e):
+        """Subir plumón en cinemática inversa - establecer Z en 150"""
+        z_input.value = "150"
+        page.update()
+    
+    bajar_plumon_ik_btn = ft.ElevatedButton("Bajar plumón", width=120, on_click=bajar_plumon_ik)
+    subir_plumon_ik_btn = ft.ElevatedButton("Subir plumón", width=120, on_click=subir_plumon_ik)
     
     def move_to_position(e):
         """Mover a posición usando IK"""
@@ -326,11 +404,45 @@ def main(page: ft.Page):
             y = float(y_input.value)
             z = float(z_input.value)
             
+            # Validar que Z esté dentro del rango del slider
+            if z < 0:
+                z = 0
+            elif z > 150:
+                z = 150
+            
             if robot.inverse_kinematics(x, y):
-                j1_slider.value = robot.angle1
-                j2_slider.value = robot.angle2
+                # Validar que los ángulos estén dentro del rango de los sliders
+                angle1 = max(-90, min(266, robot.angle1))
+                angle2 = max(-150, min(150, robot.angle2))
+                
+                j1_slider.value = angle1
+                j2_slider.value = angle2
                 z_slider.value = z
-                update_sliders_and_info()
+                
+                # Actualizar el robot con los valores validados
+                robot.angle1 = angle1
+                robot.angle2 = angle2
+                robot.z = z
+                
+                # Actualizar todos los campos
+                j1_value.value = f"{robot.angle1:.1f}"
+                j2_value.value = f"{robot.angle2:.1f}"
+                z_value.value = f"{robot.z:.1f}"
+                
+                # Mantener los valores originales de X, Y, Z que el usuario ingresó
+                x_display.value = f"X: {x:.2f}"
+                y_display.value = f"Y: {y:.2f}"
+                z_display.value = f"Z: {z:.2f}"
+                
+                # NO actualizar los campos de entrada para mantener los valores originales
+                # Los campos de entrada ya tienen los valores correctos
+                
+                # Enviar comandos al serial
+                send_serial(f"J1:{robot.angle1:.2f}\n")
+                send_serial(f"J2:{robot.angle2:.2f}\n")
+                send_serial(f"Z:{robot.z:.2f}\n")
+                
+                page.update()
             else:
                 page.snack_bar = ft.SnackBar(ft.Text("¡Posición inalcanzable!"))
                 page.snack_bar.open = True
@@ -341,6 +453,47 @@ def main(page: ft.Page):
             page.update()
     
     move_btn = ft.ElevatedButton("MOVE TO POSITION", width=300, on_click=move_to_position)
+    
+    def move_to_home(e):
+        """Mover a posición home (q1=0, q2=0, Z=0)"""
+        try:
+            # Establecer ángulos directamente en 0
+            j1_slider.value = 0
+            j2_slider.value = 0
+            z_slider.value = 0
+            
+            # Actualizar el robot
+            robot.update_angles(0, 0, 0)
+            
+            # Actualizar todos los campos
+            j1_value.value = "0.0"
+            j2_value.value = "0.0"
+            z_value.value = "0.0"
+            
+            # Establecer las coordenadas específicas para home
+            x_display.value = "X: -2.91"
+            y_display.value = "Y: 18.50"
+            z_display.value = "Z: 0.00"
+            
+            # Actualizar campos de entrada con las coordenadas de home
+            x_input.value = "-2.9083"
+            y_input.value = "18.4984"
+            z_input.value = "0"
+            
+            # Enviar comandos al serial
+            send_serial(f"J1:0.00\n")
+            send_serial(f"J2:0.00\n")
+            send_serial(f"Z:0.00\n")
+            
+            page.snack_bar = ft.SnackBar(ft.Text("¡Movido a posición HOME (q1=0, q2=0, Z=0)!"))
+            page.snack_bar.open = True
+            page.update()
+        except Exception as ex:
+            page.snack_bar = ft.SnackBar(ft.Text(f"Error al mover a HOME: {str(ex)}"))
+            page.snack_bar.open = True
+            page.update()
+    
+    home_btn = ft.ElevatedButton("MOVER A HOME", width=300, on_click=move_to_home, bgcolor=ft.colors.ORANGE_400, color=ft.colors.WHITE)
     
     def save_position_teach(e):
         """Guardar posición actual en modo Teach"""
@@ -435,20 +588,6 @@ def main(page: ft.Page):
     clear_btn = ft.ElevatedButton("Limpiar", width=100, on_click=clear_program)
     save_program_btn = ft.ElevatedButton("Guardar programa", width=200, on_click=save_program)
     
-    # Speed and Acceleration controls with callbacks
-    def on_speed_change(e):
-        robot.speed = int(speed_slider.value)
-        send_serial(f"SPEED:{robot.speed}\n")
-        page.update()
-    
-    def on_accel_change(e):
-        robot.acceleration = int(accel_slider.value)
-        send_serial(f"ACCEL:{robot.acceleration}\n")
-        page.update()
-    
-    speed_slider = ft.Slider(min=500, max=4000, value=500, width=250, label="Speed", on_change=on_speed_change)
-    accel_slider = ft.Slider(min=500, max=4000, value=500, width=250, label="Acceleration", on_change=on_accel_change)
-    
     # ==================== LAYOUT ====================
     
     forward_kinematics_section = ft.Container(
@@ -457,16 +596,22 @@ def main(page: ft.Page):
             ft.Divider(),
             
             # J1
-            ft.Row([ft.Text("J1", size=14, width=40, weight="bold"), j1_slider, j1_value], spacing=10),
+            ft.Row([ft.Text("q1", size=14, width=40, weight="bold"), j1_slider, j1_value], spacing=10),
             ft.Row([ft.Text("", size=14, width=40), j1_minus_btn, j1_jog_val, j1_plus_btn], spacing=5),
             
             # J2
-            ft.Row([ft.Text("J2", size=14, width=40, weight="bold"), j2_slider, j2_value], spacing=10),
+            ft.Row([ft.Text("q2", size=14, width=40, weight="bold"), j2_slider, j2_value], spacing=10),
             ft.Row([ft.Text("", size=14, width=40), j2_minus_btn, j2_jog_val, j2_plus_btn], spacing=5),
             
             # Z
             ft.Row([ft.Text("Z", size=14, width=40, weight="bold"), z_slider, z_value], spacing=10),
-            ft.Row([ft.Text("", size=14, width=40), z_minus_btn, z_jog_val, z_plus_btn], spacing=5),
+            ft.Row([ft.Text("", size=14, width=40), bajar_plumon_btn, subir_plumon_btn], spacing=5),
+            
+            ft.Divider(),
+            ft.Text("Resultado de cinemática directa", size=14, weight="bold"),
+            x_display,
+            y_display,
+            z_display,
         ]),
         padding=20,
         border=ft.border.all(2, ft.colors.BLUE_400),
@@ -479,13 +624,9 @@ def main(page: ft.Page):
             ft.Text("Cinemática inversa", size=18, weight="bold", color=ft.colors.GREEN_900),
             ft.Divider(),
             
-            ft.Row([x_input, y_input, z_input], spacing=10),
+            ft.Row([x_input, y_input, z_input, bajar_plumon_ik_btn, subir_plumon_ik_btn], spacing=10),
             move_btn,
-            
-            ft.Text("Resultado de cinemática directa", size=14, weight="bold"),
-            x_display,
-            y_display,
-            z_display,
+            home_btn,
         ]),
         padding=20,
         border=ft.border.all(2, ft.colors.GREEN_400),
@@ -518,18 +659,6 @@ def main(page: ft.Page):
         expand=True,
     )
     
-    speed_section = ft.Container(
-        content=ft.Column([
-            ft.Text("Parámetros de movimiento", size=14, weight="bold"),
-            ft.Divider(),
-            ft.Row([ft.Text("Velocidad:", width=100), speed_slider]),
-            ft.Row([ft.Text("Aceleración:", width=100), accel_slider]),
-        ]),
-        padding=15,
-        border=ft.border.all(1, ft.colors.GREY_400),
-        border_radius=8,
-    )
-    
     # Layout principal
     page.add(
         ft.AppBar(
@@ -545,7 +674,6 @@ def main(page: ft.Page):
             ft.Column([
                 forward_kinematics_section,
                 inverse_kinematics_section,
-                speed_section,
             ], width=650, scroll=ft.ScrollMode.AUTO),
             teach_section,
         ], expand=True),
@@ -557,8 +685,6 @@ def main(page: ft.Page):
     # Enviar valores iniciales a la placa
     send_serial(f"J1:{robot.angle1:.2f}\n")
     send_serial(f"J2:{robot.angle2:.2f}\n")
-    send_serial(f"SPEED:{robot.speed}\n")
-    send_serial(f"ACCEL:{robot.acceleration}\n")
     
     # Cargar posiciones guardadas si existen
     if robot.positions:
