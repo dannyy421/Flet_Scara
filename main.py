@@ -359,8 +359,11 @@ def main(page: ft.Page):
     def bajar_plumon(e):
         """Bajar plumón - establecer Z en 0"""
         z_slider.value = 0
-        update_sliders_and_info()
-        send_serial(f"Z:{robot.z:.2f}\n")
+        robot.z = 0
+        z_value.value = "0.0"
+        z_display.value = "Z: 0.00"
+        z_input.value = "0"
+        send_serial(f"Z:0.00\n")
         page.snack_bar = ft.SnackBar(ft.Text("Plumón bajado"))
         page.snack_bar.open = True
         page.update()
@@ -368,8 +371,11 @@ def main(page: ft.Page):
     def subir_plumon(e):
         """Subir plumón - establecer Z en 150"""
         z_slider.value = 150
-        update_sliders_and_info()
-        send_serial(f"Z:{robot.z:.2f}\n")
+        robot.z = 150
+        z_value.value = "150.0"
+        z_display.value = "Z: 150.00"
+        z_input.value = "150"
+        send_serial(f"Z:150.00\n")
         page.snack_bar = ft.SnackBar(ft.Text("Plumón subido"))
         page.snack_bar.open = True
         page.update()
