@@ -6,14 +6,15 @@ import serial
 import threading
 from datetime import datetime
 import pygame
+import serial, time
 
 class RobotModel:
     def __init__(self):
         self.angle1 = 0.0
         self.angle2 = 0.0
-        self.z = 100.0
-        self.x = 0.0
-        self.y = 0.0
+        self.z = 0.0
+        self.x = -2.9083
+        self.y = 18.4984
         self.l1 = 9.51  # Longitud del primer segmento (cm)
         self.l2 = 22.31  # Longitud del segundo segmento (cm)
         self.theta = math.radians(122.77133)  # Ángulo constante
@@ -61,51 +62,32 @@ class RobotModel:
     def inverse_kinematics(self, x, y):
         """Calcular ángulos a partir de X, Y (Inverse Kinematics)"""
         try:
-            # Verificar si está en posición home (con tolerancia)
-            home_x = -2.9083
-            home_y = 18.4984
-            tolerance = 0.1  # Tolerancia de 0.1 cm
-            
-            if abs(x - home_x) < tolerance and abs(y - home_y) < tolerance:
-                # Está en posición home, establecer directamente q1=0, q2=0
-                self.angle1 = 0.0
-                self.angle2 = 0.0
-                return True
-            
             # Calcular r (radio en el plano XY)
-            r = math.sqrt(x**2 + y**2)
+            r = math.sqrt((x**2) + (y**2))
             
+            # Verificar si la posición es alcanzable
             if r < abs(self.l1 - self.l2) or r > (self.l1 + self.l2):
                 return False  # Posición inalcanzable
             
-            # Calcular alpha primero para determinar el signo
-            alpha = math.atan2(y, x)
+            # theta = 123 grados
+            theta = math.radians(123)
             
-            # Cálculo de q3 (angle2 en la interfaz)
-            D = ((self.l1**2) + (self.l2**2) - r**2)/(2*self.l1*self.l2)
-            D = max(-1, min(1, D))  # Limitar entre -1 y 1
-            
-            # Cálculo de q2 (angle1 en la interfaz)
-            A = ((self.l1**2) + (r**2) - self.l2**2)/(2*self.l1*r)
+            # Cálculo de q3
+            A = ((self.l1**2) + (self.l2**2) - (r**2)) / (2 * self.l1 * self.l2)
             A = max(-1, min(1, A))  # Limitar entre -1 y 1
             
-            # Calcular beta para determinar q2
-            beta = math.atan2(math.sqrt(1-A**2), A)
-            q2 = alpha - beta
+            alpha = math.atan2(-math.sqrt(1 - A**2), A)
+            q3 = (math.pi - theta - alpha) - 2 * math.pi
             
-            # Si q2 (angle1/q1 en interfaz) es negativo, cambiar signo en sqrt
-            if q2 < 0:
-                beta = math.atan2(-math.sqrt(1-A**2), A)
-                phi = math.atan2(-math.sqrt(1-D**2), D)
-            else:
-                beta = math.atan2(math.sqrt(1-A**2), A)
-                phi = math.atan2(math.sqrt(1-D**2), D)
+            # Cálculo de q2
+            beta = math.atan2(y, x)
+            D = ((r**2) + (self.l1**2) - (self.l2**2)) / (2 * r * self.l1)
+            D = max(-1, min(1, D))  # Limitar entre -1 y 1
             
-            # Recalcular q2 con el beta correcto
-            q2 = alpha - beta
+            phi = math.atan2(-math.sqrt(1 - D**2), D)
+            q2 = beta - phi
             
-            # Calcular q3 con el phi correcto
-            q3 = -(phi + self.theta - math.pi)
+            # q1 = z (se maneja por separado)
             
             # Convertir a grados
             self.angle1 = math.degrees(q2)  # q2 -> angle1 (mostrado como q1 en UI)
@@ -167,7 +149,7 @@ class RobotModel:
 ser = None
 serial_connected = False
 
-def init_serial(port='COM11', baudrate=115200):
+def init_serial(port='COM6', baudrate=115200):
     """Inicializar comunicación serial"""
     global ser, serial_connected
     try:
@@ -222,12 +204,15 @@ def main(page: ft.Page):
     
     robot = RobotModel()
     robot.load_from_file()
-    
+
+
+
+        
     # ==================== SERIAL COMMUNICATION SETUP ====================
     
     # Intentar conectar al puerto serial
-    serial_port = 'COM11'  # Cambiado de COM3 a COM11
-    init_serial(serial_port, 115200)
+    serial_port = 'COM6'  # Cambiado de COM3 a COM11
+    init_serial(serial_port, 9600)
     
     # Variable para estado del serial
     serial_status_text = ft.Text("Serial: Desconectado", size=12, color=ft.colors.RED)
@@ -285,15 +270,104 @@ def main(page: ft.Page):
     
     update_serial_status()
     
+    # ==================== JOYSTICK SETUP ====================
+    
+    def joystick_thread():
+        """Thread para leer eventos del joystick"""
+        pygame.init()
+        joystick_count = pygame.joystick.get_count()
+        
+        if joystick_count > 0:
+            my_joystick = pygame.joystick.Joystick(0)
+            my_joystick.init()
+            print(f"Joystick conectado: {my_joystick.get_name()}")
+            
+            while True:
+                for event in pygame.event.get():
+                    if event.type == pygame.JOYBUTTONUP:
+                        button_number = event.button
+                        print(f"Button {button_number} released")
+                        
+                        if button_number == 0:
+                            robot.y -= 1
+                        elif button_number == 1:
+                            robot.x -= 1
+                        elif button_number == 2:
+                            robot.x += 1
+                        elif button_number == 3:
+                            robot.y += 1
+                        elif button_number == 4:
+                            robot.z = 1000
+                        elif button_number == 5:
+                            robot.z = 0
+                        elif button_number == 10:
+                            # Mover a posición home
+                            robot.x = -2.9083
+                            robot.y = 18.4983
+                            robot.z = 0
+                        
+                        # Calcular cinemática inversa con los nuevos valores
+                        if button_number in [0, 1, 2, 3, 4, 5, 10]:
+                            if robot.inverse_kinematics(robot.x, robot.y):
+                                # Actualizar sliders con los nuevos ángulos calculados
+                                j1_slider.value = robot.angle1
+                                j2_slider.value = robot.angle2
+                                z_slider.value = robot.z
+                                
+                                # Actualizar displays
+                                x_display.value = f"X: {robot.x:.2f}"
+                                y_display.value = f"Y: {robot.y:.2f}"
+                                z_display.value = f"Z: {robot.z:.2f}"
+                                
+                                # Actualizar campos de cinemática inversa
+                                x_input.value = f"{robot.x:.2f}"
+                                y_input.value = f"{robot.y:.2f}"
+                                z_input.value = f"{robot.z:.2f}"
+                                
+                                # Actualizar valores de ángulos
+                                j1_value.value = f"{robot.angle1:.1f}"
+                                j2_value.value = f"{robot.angle2:.1f}"
+                                z_value.value = f"{robot.z:.1f}"
+                                
+                                # Enviar comandos al serial
+                                send_serial(f"J1:{robot.angle1:.2f}\n")
+                                send_serial(f"J2:{robot.angle2:.2f}\n")
+                                send_serial(f"Z:{robot.z:.2f}\n")
+                                send_serial("d\n")
+                                
+                                page.update()
+                            else:
+                                print("Posición inalcanzable")
+                                # Revertir el cambio si la posición es inalcanzable
+                                if button_number == 0:
+                                    robot.y += 1
+                                elif button_number == 1:
+                                    robot.x += 1
+                                elif button_number == 2:
+                                    robot.x -= 1
+                                elif button_number == 3:
+                                    robot.y -= 1
+                                elif button_number == 10:
+                                    # No revertir para home, mantener valores anteriores
+                                    pass
+
+                
+                pygame.time.wait(10)
+        else:
+            print("No joysticks connected.")
+    
+    # Iniciar thread del joystick
+    threading.Thread(target=joystick_thread, daemon=True).start()
+    
     # ==================== FORWARD KINEMATICS SECTION ====================
     
-    j1_slider = ft.Slider(min=-90, max=266, value=0, width=300, label="J1")
-    j2_slider = ft.Slider(min=-150, max=150, value=0, width=300, label="J2")
-    z_slider = ft.Slider(min=0, max=150, value=100, width=300, label="Z")
+    j1_slider = ft.Slider(min=-200, max=266, value=0, width=300, label="J1")
+    j2_slider = ft.Slider(min=-300, max=300, value=0, width=300, label="J2")
+    z_slider = ft.Slider(min=0, max=1000, value=0, width=300, label="Z")
     
     j1_value = ft.TextField(value="0", read_only=True, width=80)
     j2_value = ft.TextField(value="0", read_only=True, width=80)
-    z_value = ft.TextField(value="100", read_only=True, width=80)
+    z_value = ft.TextField(value="0", read_only=True, width=80)
     
     j1_jog_val = ft.TextField(value="1", width=50, input_filter=ft.NumbersOnlyInputFilter())
     j2_jog_val = ft.TextField(value="1", width=50, input_filter=ft.NumbersOnlyInputFilter())
@@ -301,9 +375,9 @@ def main(page: ft.Page):
     
     # ==================== INVERSE KINEMATICS SECTION ====================
     
-    x_input = ft.TextField(label="X", width=100, keyboard_type=ft.KeyboardType.NUMBER)
-    y_input = ft.TextField(label="Y", width=100, keyboard_type=ft.KeyboardType.NUMBER)
-    z_input = ft.TextField(label="Z", width=100, value="100", keyboard_type=ft.KeyboardType.NUMBER)
+    x_input = ft.TextField(label="X", width=100, value="-2.91", keyboard_type=ft.KeyboardType.NUMBER)
+    y_input = ft.TextField(label="Y", width=100, value="18.50", keyboard_type=ft.KeyboardType.NUMBER)
+    z_input = ft.TextField(label="Z", width=100, value="0", keyboard_type=ft.KeyboardType.NUMBER)
     
     # ==================== TEACH MODE SECTION ====================
     
@@ -312,9 +386,9 @@ def main(page: ft.Page):
     
     # ==================== INFO DISPLAY ====================
     
-    x_display = ft.Text("X: 0.00", size=14)
-    y_display = ft.Text("Y: 0.00", size=14)
-    z_display = ft.Text("Z: 100.00", size=14)
+    x_display = ft.Text("X: -2.91", size=14)
+    y_display = ft.Text("Y: 18.50", size=14)
+    z_display = ft.Text("Z: 0.00", size=14)
     
     def update_sliders_and_info():
         """Actualizar información después de cambios en sliders"""
@@ -341,15 +415,21 @@ def main(page: ft.Page):
     
     def on_j1_change(e):
         update_sliders_and_info()
-        send_serial(f"J1:{robot.angle1:.2f}\n")  # Agregar \n para terminar comando
+        send_serial(f"J1:{robot.angle1:.2f}\n")
+        send_serial(f"J2:{robot.angle2:.2f}\n")
+        send_serial(f"Z:{robot.z:.2f}\n")
     
     def on_j2_change(e):
         update_sliders_and_info()
-        send_serial(f"J2:{robot.angle2:.2f}\n")  # Agregar \n para terminar comando
+        send_serial(f"J1:{robot.angle1:.2f}\n")
+        send_serial(f"J2:{robot.angle2:.2f}\n")
+        send_serial(f"Z:{robot.z:.2f}\n")
     
     def on_z_change(e):
         update_sliders_and_info()
-        send_serial(f"Z:{robot.z:.2f}\n")  # Mantener para futuro uso
+        send_serial(f"J1:{robot.angle1:.2f}\n")
+        send_serial(f"J2:{robot.angle2:.2f}\n")
+        send_serial(f"Z:{robot.z:.2f}\n")
     
     j1_slider.on_change = on_j1_change
     j2_slider.on_change = on_j2_change
@@ -361,6 +441,10 @@ def main(page: ft.Page):
             jog_amount = float(jog_field.value)
             slider.value = max(slider.min, current - jog_amount)
             update_sliders_and_info()
+            # Enviar comandos al serial
+            send_serial(f"J1:{robot.angle1:.2f}\n")
+            send_serial(f"J2:{robot.angle2:.2f}\n")
+            send_serial(f"Z:{robot.z:.2f}\n")
         except:
             pass
     
@@ -370,6 +454,10 @@ def main(page: ft.Page):
             jog_amount = float(jog_field.value)
             slider.value = min(slider.max, current + jog_amount)
             update_sliders_and_info()
+            # Enviar comandos al serial
+            send_serial(f"J1:{robot.angle1:.2f}\n")
+            send_serial(f"J2:{robot.angle2:.2f}\n")
+            send_serial(f"Z:{robot.z:.2f}\n")
         except:
             pass
     
@@ -386,13 +474,13 @@ def main(page: ft.Page):
         page.update()
     
     def subir_plumon(e):
-        """Subir plumón - establecer Z en 150"""
-        z_slider.value = 150
-        robot.z = 150
-        z_value.value = "150.0"
-        z_display.value = "Z: 150.00"
-        z_input.value = "150"
-        send_serial(f"Z:150.00\n")
+        """Subir plumón - establecer Z en 1000"""
+        z_slider.value = 1000
+        robot.z = 1000
+        z_value.value = "1000.0"
+        z_display.value = "Z: 1000.00"
+        z_input.value = "1000"
+        send_serial(f"Z:1000.00\n")
         page.snack_bar = ft.SnackBar(ft.Text("Plumón subido"))
         page.snack_bar.open = True
         page.update()
@@ -413,8 +501,8 @@ def main(page: ft.Page):
         page.update()
     
     def subir_plumon_ik(e):
-        """Subir plumón en cinemática inversa - establecer Z en 150"""
-        z_input.value = "150"
+        """Subir plumón en cinemática inversa - establecer Z en 1000"""
+        z_input.value = "1000"
         page.update()
     
     bajar_plumon_ik_btn = ft.ElevatedButton("Bajar plumón", width=120, on_click=bajar_plumon_ik)
@@ -430,13 +518,13 @@ def main(page: ft.Page):
             # Validar que Z esté dentro del rango del slider
             if z < 0:
                 z = 0
-            elif z > 150:
-                z = 150
+            elif z > 1000:
+                z = 1000
             
             if robot.inverse_kinematics(x, y):
                 # Validar que los ángulos estén dentro del rango de los sliders
-                angle1 = max(-90, min(266, robot.angle1))
-                angle2 = max(-150, min(150, robot.angle2))
+                angle1 = max(-200, min(266, robot.angle1))
+                angle2 = max(-300, min(300, robot.angle2))
                 
                 j1_slider.value = angle1
                 j2_slider.value = angle2
@@ -494,8 +582,8 @@ def main(page: ft.Page):
             z_value.value = "0.0"
             
             # Establecer las coordenadas específicas para home
-            x_display.value = "X: -2.91"
-            y_display.value = "Y: 18.50"
+            x_display.value = "X: -2.90"
+            y_display.value = "Y: 18.49"
             z_display.value = "Z: 0.00"
             
             # Actualizar campos de entrada con las coordenadas de home
@@ -702,12 +790,18 @@ def main(page: ft.Page):
         ], expand=True),
     )
     
-    # Inicializar información
-    update_sliders_and_info()
+    # Inicializar información con valores home
+    # No llamar a update_sliders_and_info() porque sobrescribe los valores iniciales
+    x_input.value = f"{robot.x:.2f}"
+    y_input.value = f"{robot.y:.2f}"
+    z_input.value = f"{robot.z:.2f}"
+    
+    page.update()
     
     # Enviar valores iniciales a la placa
     send_serial(f"J1:{robot.angle1:.2f}\n")
     send_serial(f"J2:{robot.angle2:.2f}\n")
+    send_serial(f"Z:{robot.z:.2f}\n")
     
     # Cargar posiciones guardadas si existen
     if robot.positions:
@@ -726,11 +820,6 @@ def main(page: ft.Page):
                 bgcolor=ft.colors.BLUE_50,
             )
             positions_list.controls.append(pos_item)
-
-
-if __name__ == "__main__":
-    ft.app(target=main)
-
 
 if __name__ == "__main__":
     ft.app(target=main)
